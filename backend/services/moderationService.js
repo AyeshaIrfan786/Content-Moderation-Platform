@@ -31,17 +31,6 @@ const parseModerationJson = (text) => {
   return results;
 };
 
-const getProvider = () => {
-  const configured = (process.env.MODERATION_PROVIDER || '').toLowerCase();
-  if (configured === 'gemini' || configured === 'grok') return configured;
-
-  const grokKey = process.env.XAI_API_KEY || process.env.GROK_API_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY;
-
-  if (grokKey && !geminiKey) return 'grok';
-  return 'gemini';
-};
-
 const validateGeminiKey = (apiKey) => {
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not set in backend/.env');
@@ -52,12 +41,6 @@ const validateGeminiKey = (apiKey) => {
     throw new Error(
       'Invalid GEMINI_API_KEY. Create a key at https://aistudio.google.com/api-keys — it should start with AIza (legacy) or AQ. (auth key).'
     );
-  }
-};
-
-const validateGrokKey = (apiKey) => {
-  if (!apiKey) {
-    throw new Error('XAI_API_KEY (or GROK_API_KEY) is not set in backend/.env');
   }
 };
 
@@ -136,67 +119,7 @@ const analyzeWithGemini = async (base64Image, mimeType) => {
   return parseModerationJson(candidate.content.parts[0].text);
 };
 
-const analyzeWithGrok = async (base64Image, mimeType) => {
-  const apiKey = process.env.XAI_API_KEY || process.env.GROK_API_KEY;
-  validateGrokKey(apiKey);
-
-  const model = process.env.GROK_MODEL || 'grok-2-vision-1212';
-  const imageUrl = `data:${mimeType};base64,${base64Image}`;
-
-  const response = await fetch('https://api.x.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image_url',
-            image_url: { url: imageUrl, detail: 'high' }
-          },
-          {
-            type: 'text',
-            text: MODERATION_PROMPT
-          }
-        ]
-      }]
-    })
-  });
-
-  const data = await response.json();
-
-  if (data.error) {
-    throw new Error(`Grok API error: ${data.error.message}`);
-  }
-
-  if (!response.ok) {
-    throw new Error(`Grok API request failed (${response.status})`);
-  }
-
-  const text = data.choices?.[0]?.message?.content;
-  if (!text) {
-    throw new Error('Grok returned no analysis for this image.');
-  }
-
-  try {
-    return parseModerationJson(text);
-  } catch {
-    const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
-    if (Array.isArray(parsed.results)) return parsed.results;
-    if (Array.isArray(parsed.categories)) return parsed.categories;
-    throw new Error('Grok returned JSON in an unexpected format.');
-  }
-};
-
 const analyzeImage = async (base64Image, mimeType) => {
-  const provider = getProvider();
-  if (provider === 'grok') {
-    return analyzeWithGrok(base64Image, mimeType);
-  }
   return analyzeWithGemini(base64Image, mimeType);
 };
 
