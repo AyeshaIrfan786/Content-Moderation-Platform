@@ -1,118 +1,143 @@
-import { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import api from '../../api/axios';
-import Layout from '../../components/Layout';
-import { CATEGORY_LABELS } from '../../utils/constants';
+const PolicyConfig = require('../models/PolicyConfig');
+const Submission = require('../models/Submission');
+const Appeal = require('../models/Appeal');
+const User = require('../models/User');
 
-const COLORS = ['#22c55e', '#f59e0b', '#ef4444', '#6366f1', '#8b5cf6', '#ec4899'];
 
-export default function AdminAnalytics() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+exports.getPolicies = async (req, res) => {
+  try {
+    const policies = await PolicyConfig.find();
+    res.json(policies);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
-  useEffect(() => {
-    api.get('/admin/analytics')
-      .then((res) => setData(res.data))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, []);
 
-  if (loading) return <Layout><p style={{ color: 'var(--muted)' }}>Loading...</p></Layout>;
-  if (!data) return <Layout><div className="empty">Failed to load analytics.</div></Layout>;
+exports.updatePolicy = async (req, res) => {
+  try {
+    const { enabled, threshold, enforcement } = req.body;
+    const policy = await PolicyConfig.findOneAndUpdate(
+      { category: req.params.category },
+      { enabled, threshold, enforcement },
+      { new: true }
+    );
+    if (!policy) return res.status(404).json({ message: 'Policy not found' });
+    res.json(policy);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
-  const outcomeData = Object.entries(data.outcomeCount).map(([name, value]) => ({ name, value }));
-  const categoryData = Object.entries(data.categoryViolationCount).map(([key, value]) => ({
-    name: CATEGORY_LABELS[key] || key,
-    value,
-  }));
-  const appealData = [
-    { name: 'Pending', value: data.appealStats.pending },
-    { name: 'Accepted', value: data.appealStats.accepted },
-    { name: 'Rejected', value: data.appealStats.rejected },
-  ];
 
-  return (
-    <Layout>
-      <div className="page-header">
-        <h2>Analytics Dashboard</h2>
-        <p>Platform moderation statistics.</p>
-      </div>
+exports.getAllSubmissions = async (req, res) => {
+  try {
+    const submissions = await Submission.find().populate('user', 'name email').sort({ createdAt: -1 });
+    res.json(submissions);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
-      <div className="grid-3" style={{ marginBottom: 24 }}>
-        <div className="card stat-card">
-          <div className="stat-value">{data.totalSubmissions}</div>
-          <div className="stat-label">Total Submissions</div>
-        </div>
-        <div className="card stat-card">
-          <div className="stat-value">{data.totalImages}</div>
-          <div className="stat-label">Total Images</div>
-        </div>
-        <div className="card stat-card">
-          <div className="stat-value">{data.appealStats.total}</div>
-          <div className="stat-label">Total Appeals</div>
-        </div>
-      </div>
 
-      <div className="grid-2">
-        <div className="card">
-          <div className="card-title">Verdict Distribution</div>
-          <ResponsiveContainer width="100%" height={220}>
-            <PieChart>
-              <Pie data={outcomeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label>
-                {outcomeData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-              </Pie>
-              <Tooltip />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
+exports.overrideVerdict = async (req, res) => {
+  try {
+    const { submissionId, imageIndex, newOutcome } = req.body;
+    const submission = await Submission.findById(submissionId);
+    if (!submission) return res.status(404).json({ message: 'Submission not found' });
 
-        <div className="card">
-          <div className="card-title">Appeal Status</div>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={appealData}>
-              <XAxis dataKey="name" tick={{ fill: '#8b92a8', fontSize: 12 }} />
-              <YAxis tick={{ fill: '#8b92a8', fontSize: 12 }} />
-              <Tooltip />
-              <Bar dataKey="value" fill="#6366f1" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+    submission.images[imageIndex].outcome = newOutcome;
+    await submission.save();
+    res.json(submission);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 
-      {categoryData.length > 0 && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-title">Violations by Category</div>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={categoryData} layout="vertical">
-              <XAxis type="number" tick={{ fill: '#8b92a8', fontSize: 12 }} />
-              <YAxis type="category" dataKey="name" width={160} tick={{ fill: '#8b92a8', fontSize: 11 }} />
-              <Tooltip />
-              <Bar dataKey="value" fill="#ef4444" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+// Analytics dashboard data
+exports.getAnalytics = async (req, res) => {
+  try {
+    const submissions = await Submission.find();
+    const appeals = await Appeal.find();
 
-      {data.rankedUsers?.length > 0 && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-title">Top Users by Submissions</div>
-          <table className="verdict-table">
-            <thead>
-              <tr><th>User</th><th>Email</th><th>Submissions</th></tr>
-            </thead>
-            <tbody>
-              {data.rankedUsers.map((entry, i) => (
-                <tr key={i}>
-                  <td>{entry.user.name}</td>
-                  <td>{entry.user.email}</td>
-                  <td>{entry.submissionCount}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Layout>
-  );
-}
+    // total volume
+    const totalSubmissions = submissions.length;
+    const totalImages = submissions.reduce((sum, s) => sum + s.images.length, 0);
+
+    // outcome distribution
+    const outcomeCount = { approved: 0, flagged: 0, blocked: 0 };
+    const categoryViolationCount = {};
+
+    // per-user counters (built in the same pass as everything else)
+    const userSubmissionCount = {};
+    const userViolationCount = {};
+
+    // submission volume over time, bucketed by day (YYYY-MM-DD)
+    const volumeByDate = {};
+
+    submissions.forEach(s => {
+      const uid = s.user.toString();
+      userSubmissionCount[uid] = (userSubmissionCount[uid] || 0) + 1;
+
+      const dateKey = s.createdAt.toISOString().slice(0, 10);
+      volumeByDate[dateKey] = (volumeByDate[dateKey] || 0) + 1;
+
+      s.images.forEach(img => {
+        outcomeCount[img.outcome] = (outcomeCount[img.outcome] || 0) + 1;
+
+        // an image that didn't come out clean counts as a violation against the user
+        if (img.outcome !== 'approved') {
+          userViolationCount[uid] = (userViolationCount[uid] || 0) + 1;
+        }
+
+        img.verdictDetails.forEach(v => {
+          if (v.result === 'violation') {
+            categoryViolationCount[v.category] = (categoryViolationCount[v.category] || 0) + 1;
+          }
+        });
+      });
+    });
+
+    // sort ascending so the trend chart reads left-to-right chronologically
+    const submissionsOverTime = Object.entries(volumeByDate)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    // appeal stats
+    const appealStats = {
+      total: appeals.length,
+      pending: appeals.filter(a => a.status === 'pending').length,
+      accepted: appeals.filter(a => a.status === 'accepted').length,
+      rejected: appeals.filter(a => a.status === 'rejected').length
+    };
+
+    // fetch every user who shows up in either ranking
+    const allUserIds = new Set([
+      ...Object.keys(userSubmissionCount),
+      ...Object.keys(userViolationCount)
+    ]);
+    const users = await User.find({ _id: { $in: [...allUserIds] } }).select('name email');
+
+    const rankedUsersBySubmissions = users
+      .map(u => ({ user: u, submissionCount: userSubmissionCount[u._id.toString()] || 0 }))
+      .sort((a, b) => b.submissionCount - a.submissionCount);
+
+    const rankedUsersByViolations = users
+      .map(u => ({ user: u, violationCount: userViolationCount[u._id.toString()] || 0 }))
+      .filter(u => u.violationCount > 0)
+      .sort((a, b) => b.violationCount - a.violationCount);
+
+    res.json({
+      totalSubmissions,
+      totalImages,
+      outcomeCount,
+      categoryViolationCount,
+      submissionsOverTime,
+      appealStats,
+      rankedUsersBySubmissions,
+      rankedUsersByViolations
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
