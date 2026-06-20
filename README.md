@@ -16,7 +16,7 @@ Built to satisfy the Full-Stack Intern Assignment: multi-role auth, AI integrati
 
 **Why a policy snapshot is stored on every image, not just a reference:** the assignment requires that policy changes "do not retroactively alter existing verdicts." Storing only a reference (e.g. `policyId`) would mean an admin editing that policy later silently changes the meaning of old verdicts. Snapshotting the full policy config at screening time makes every past verdict immutable and auditable, independent of what the live policy config looks like today.
 
-**Why the AI call sits in its own service module (`services/moderationService.js`):** the controller shouldn't know which vision provider is in use. `moderationService` exposes one function — `analyzeImage(base64, mimeType) → per-category results` — so the provider (Grok or Gemini, see env vars below) can be swapped via a single environment variable with zero controller changes.
+**Why the AI call sits in its own service module (`services/moderationService.js`):** the controller shouldn't know the details of the vision provider. `moderationService` exposes one function — `analyzeImage(base64, mimeType) → per-category results` — keeping screening logic isolated from the rest of the app.
 
 **Why JWT in `localStorage` instead of sessions:** the frontend and backend are fully decoupled (separate Docker containers, separate dev servers), so a stateless token sent via an Axios interceptor is simpler than managing server-side session storage across a future multi-instance deployment.
 
@@ -59,7 +59,7 @@ Browser → Nginx (frontend) → /api proxy → Express backend → MongoDB
 
 ### Prerequisites
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- An [xAI API key](https://console.x.ai) **or** a [Gemini API key](https://aistudio.google.com/apikey)
+- A [Gemini API key](https://aistudio.google.com/apikey)
 
 ### 1. Configure environment
 ```bash
@@ -67,7 +67,7 @@ cp .env.example .env
 ```
 Edit `.env` and set at minimum:
 - `JWT_SECRET` — any long random string
-- `XAI_API_KEY` (if using Grok) **or** `GEMINI_API_KEY` (if using Gemini)
+- `GEMINI_API_KEY` — your Gemini API key
 
 ### 2. Build and run
 ```bash
@@ -127,8 +127,8 @@ Open http://localhost:5173 — Vite proxies `/api` to the backend on port 5000.
 | `MONGO_URI` | Yes | MongoDB connection string |
 | `PORT` | No | Backend port (default `5000`) |
 | `JWT_SECRET` | Yes | Secret used to sign JWT tokens |
-| `MODERATION_PROVIDER` | No |`gemini` |
-| `GEMINI_API_KEY` | using Gemini | Google AI Studio key |
+| `MODERATION_PROVIDER` | No | `gemini` |
+| `GEMINI_API_KEY` | Yes | Google AI Studio key |
 | `VITE_API_URL` | No | Frontend API base URL (default `/api`) |
 
 ---
