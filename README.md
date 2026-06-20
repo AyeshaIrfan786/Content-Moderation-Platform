@@ -127,9 +127,8 @@ Open http://localhost:5173 — Vite proxies `/api` to the backend on port 5000.
 | `MONGO_URI` | Yes | MongoDB connection string |
 | `PORT` | No | Backend port (default `5000`) |
 | `JWT_SECRET` | Yes | Secret used to sign JWT tokens |
-| `MODERATION_PROVIDER` | No | `grok` or `gemini` |
-| `XAI_API_KEY` | If using Grok | xAI API key from console.x.ai |
-| `GEMINI_API_KEY` | If using Gemini | Google AI Studio key |
+| `MODERATION_PROVIDER` | No |`gemini` |
+| `GEMINI_API_KEY` | using Gemini | Google AI Studio key |
 | `VITE_API_URL` | No | Frontend API base URL (default `/api`) |
 
 ---
