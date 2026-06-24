@@ -1,143 +1,174 @@
-const PolicyConfig = require('../models/PolicyConfig');
-const Submission = require('../models/Submission');
-const Appeal = require('../models/Appeal');
-const User = require('../models/User');
+import { useState, useEffect } from 'react';
+import api from '../../api/axios';
+import Layout from '../../components/Layout';
+import { CATEGORY_LABELS } from '../../utils/constants';
+import {
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
 
+const OUTCOME_COLORS = { approved: '#22c55e', flagged: '#eab308', blocked: '#ef4444' };
 
-exports.getPolicies = async (req, res) => {
-  try {
-    const policies = await PolicyConfig.find();
-    res.json(policies);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
+export default function AdminAnalytics() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-
-exports.updatePolicy = async (req, res) => {
-  try {
-    const { enabled, threshold, enforcement } = req.body;
-    const policy = await PolicyConfig.findOneAndUpdate(
-      { category: req.params.category },
-      { enabled, threshold, enforcement },
-      { new: true }
-    );
-    if (!policy) return res.status(404).json({ message: 'Policy not found' });
-    res.json(policy);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-
-exports.getAllSubmissions = async (req, res) => {
-  try {
-    const submissions = await Submission.find().populate('user', 'name email').sort({ createdAt: -1 });
-    res.json(submissions);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-
-exports.overrideVerdict = async (req, res) => {
-  try {
-    const { submissionId, imageIndex, newOutcome } = req.body;
-    const submission = await Submission.findById(submissionId);
-    if (!submission) return res.status(404).json({ message: 'Submission not found' });
-
-    submission.images[imageIndex].outcome = newOutcome;
-    await submission.save();
-    res.json(submission);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-// Analytics dashboard data
-exports.getAnalytics = async (req, res) => {
-  try {
-    const submissions = await Submission.find();
-    const appeals = await Appeal.find();
-
-    // total volume
-    const totalSubmissions = submissions.length;
-    const totalImages = submissions.reduce((sum, s) => sum + s.images.length, 0);
-
-    // outcome distribution
-    const outcomeCount = { approved: 0, flagged: 0, blocked: 0 };
-    const categoryViolationCount = {};
-
-    // per-user counters (built in the same pass as everything else)
-    const userSubmissionCount = {};
-    const userViolationCount = {};
-
-    // submission volume over time, bucketed by day (YYYY-MM-DD)
-    const volumeByDate = {};
-
-    submissions.forEach(s => {
-      const uid = s.user.toString();
-      userSubmissionCount[uid] = (userSubmissionCount[uid] || 0) + 1;
-
-      const dateKey = s.createdAt.toISOString().slice(0, 10);
-      volumeByDate[dateKey] = (volumeByDate[dateKey] || 0) + 1;
-
-      s.images.forEach(img => {
-        outcomeCount[img.outcome] = (outcomeCount[img.outcome] || 0) + 1;
-
-        // an image that didn't come out clean counts as a violation against the user
-        if (img.outcome !== 'approved') {
-          userViolationCount[uid] = (userViolationCount[uid] || 0) + 1;
-        }
-
-        img.verdictDetails.forEach(v => {
-          if (v.result === 'violation') {
-            categoryViolationCount[v.category] = (categoryViolationCount[v.category] || 0) + 1;
-          }
-        });
-      });
-    });
-
-    // sort ascending so the trend chart reads left-to-right chronologically
-    const submissionsOverTime = Object.entries(volumeByDate)
-      .map(([date, count]) => ({ date, count }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-
-    // appeal stats
-    const appealStats = {
-      total: appeals.length,
-      pending: appeals.filter(a => a.status === 'pending').length,
-      accepted: appeals.filter(a => a.status === 'accepted').length,
-      rejected: appeals.filter(a => a.status === 'rejected').length
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      setLoading(true);
+      try {
+        const res = await api.get('/admin/analytics');
+        setData(res.data);
+      } catch {
+        setData(null);
+      }
+      setLoading(false);
     };
+    fetchAnalytics();
+  }, []);
 
-    // fetch every user who shows up in either ranking
-    const allUserIds = new Set([
-      ...Object.keys(userSubmissionCount),
-      ...Object.keys(userViolationCount)
-    ]);
-    const users = await User.find({ _id: { $in: [...allUserIds] } }).select('name email');
-
-    const rankedUsersBySubmissions = users
-      .map(u => ({ user: u, submissionCount: userSubmissionCount[u._id.toString()] || 0 }))
-      .sort((a, b) => b.submissionCount - a.submissionCount);
-
-    const rankedUsersByViolations = users
-      .map(u => ({ user: u, violationCount: userViolationCount[u._id.toString()] || 0 }))
-      .filter(u => u.violationCount > 0)
-      .sort((a, b) => b.violationCount - a.violationCount);
-
-    res.json({
-      totalSubmissions,
-      totalImages,
-      outcomeCount,
-      categoryViolationCount,
-      submissionsOverTime,
-      appealStats,
-      rankedUsersBySubmissions,
-      rankedUsersByViolations
-    });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+  if (loading) {
+    return (
+      <Layout>
+        <p style={{ color: 'var(--muted)' }}>Loading...</p>
+      </Layout>
+    );
   }
-};
+
+  if (!data) {
+    return (
+      <Layout>
+        <div className="empty">Could not load analytics.</div>
+      </Layout>
+    );
+  }
+
+  const outcomeData = Object.entries(data.outcomeCount).map(([outcome, count]) => ({
+    name: outcome,
+    value: count,
+  }));
+
+  const categoryData = Object.entries(data.categoryViolationCount).map(([category, count]) => ({
+    name: CATEGORY_LABELS[category] || category,
+    violations: count,
+  }));
+
+  return (
+    <Layout>
+      <div className="page-header">
+        <h2>Analytics Dashboard</h2>
+        <p>Platform-wide moderation activity overview.</p>
+      </div>
+
+      <div className="stats-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <div className="card">
+          <div style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Total Submissions</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 600 }}>{data.totalSubmissions}</div>
+        </div>
+        <div className="card">
+          <div style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Total Images Screened</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 600 }}>{data.totalImages}</div>
+        </div>
+        <div className="card">
+          <div style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Pending Appeals</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 600 }}>{data.appealStats.pending}</div>
+        </div>
+        <div className="card">
+          <div style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Appeals Resolved</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 600 }}>
+            {data.appealStats.accepted + data.appealStats.rejected}
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginBottom: 12 }}>Submission Volume Over Time</h3>
+        <ResponsiveContainer width="100%" height={250}>
+          <LineChart data={data.submissionsOverTime}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="date" />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Line type="monotone" dataKey="count" stroke="#6366f1" strokeWidth={2} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginBottom: 12 }}>Verdict Distribution</h3>
+        <ResponsiveContainer width="100%" height={250}>
+          <PieChart>
+            <Pie data={outcomeData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
+              {outcomeData.map((entry) => (
+                <Cell key={entry.name} fill={OUTCOME_COLORS[entry.name] || '#94a3b8'} />
+              ))}
+            </Pie>
+            <Tooltip />
+            <Legend />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginBottom: 12 }}>Violations by Category</h3>
+        <ResponsiveContainer width="100%" height={250}>
+          <BarChart data={categoryData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="name" angle={-15} textAnchor="end" height={60} interval={0} fontSize={12} />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Bar dataKey="violations" fill="#ef4444" />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginBottom: 12 }}>Appeal Outcomes</h3>
+        <p style={{ fontSize: '0.9rem' }}>
+          {data.appealStats.total} total · {data.appealStats.accepted} accepted ·{' '}
+          {data.appealStats.rejected} rejected · {data.appealStats.pending} pending
+        </p>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div className="card">
+          <h3 style={{ marginBottom: 12 }}>Top Users — by Submission Count</h3>
+          {data.rankedUsersBySubmissions.length === 0 ? (
+            <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No data yet.</p>
+          ) : (
+            <table className="verdict-table">
+              <thead><tr><th>User</th><th>Submissions</th></tr></thead>
+              <tbody>
+                {data.rankedUsersBySubmissions.map((r) => (
+                  <tr key={r.user._id}>
+                    <td>{r.user.name}</td>
+                    <td>{r.submissionCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="card">
+          <h3 style={{ marginBottom: 12 }}>Top Users — by Violation Count</h3>
+          {data.rankedUsersByViolations.length === 0 ? (
+            <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>No violations yet.</p>
+          ) : (
+            <table className="verdict-table">
+              <thead><tr><th>User</th><th>Violations</th></tr></thead>
+              <tbody>
+                {data.rankedUsersByViolations.map((r) => (
+                  <tr key={r.user._id}>
+                    <td>{r.user.name}</td>
+                    <td>{r.violationCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </Layout>
+  );
+}
